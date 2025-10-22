@@ -96,4 +96,4 @@ export class AuthService {
   async getProfile(userId: string) {
     return this.userModel.findById(userId).select('-password');
   }
-}
+} 
