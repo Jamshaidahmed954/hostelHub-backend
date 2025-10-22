@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
@@ -14,16 +18,55 @@ export class AuthService {
 
   // ✅ Register user
   async register(name: string, email: string, password: string, role?: string) {
-    const existingUser = await this.userModel.findOne({ email });
-    if (existingUser) {
-      throw new UnauthorizedException('User already exists');
+    try {
+      // Validate required fields
+      if (!name || name.trim() === '') {
+        throw new BadRequestException('Name is required and cannot be empty');
+      }
+      if (!email || email.trim() === '') {
+        throw new BadRequestException('Email is required and cannot be empty');
+      }
+      if (!password || password.trim() === '') {
+        throw new BadRequestException(
+          'Password is required and cannot be empty',
+        );
+      }
+
+      const existingUser = await this.userModel.findOne({ email });
+      if (existingUser) {
+        throw new UnauthorizedException('User already exists');
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const user = new this.userModel({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        password: hashedPassword,
+        role: role || 'user',
+      });
+
+      await user.save();
+
+      return {
+        success: true,
+        user: {
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        },
+        message: 'User registered successfully',
+      };
+    } catch (error) {
+      if (error.name === 'ValidationError') {
+        const validationErrors = Object.values(error.errors).map(
+          (err: any) => err.message,
+        );
+        throw new BadRequestException(
+          `Validation failed: ${validationErrors.join(', ')}`,
+        );
+      }
+      throw error;
     }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new this.userModel({name, email, password: hashedPassword, role: role });
-    await user.save();
-
-    return { success: true, user: { name: user.name, email: user.email, role: user.role }, message: 'User registered successfully' };
   }
 
   // ✅ Login user
@@ -41,7 +84,12 @@ export class AuthService {
     const payload = { sub: user._id, email: user.email, role: user.role };
     const token = this.jwtService.sign(payload);
 
-    return { success: true, access_token: token, user: { name: user.name, email: user.email, role: user.role }, message: "Login successful" };
+    return {
+      success: true,
+      access_token: token,
+      user: { name: user.name, email: user.email, role: user.role },
+      message: 'Login successful',
+    };
   }
 
   // ✅ Get Profile from token
