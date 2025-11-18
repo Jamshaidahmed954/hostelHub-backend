@@ -1,13 +1,15 @@
 import {
-  Controller,
-  Post,
   Body,
+  Controller,
+  Delete,
+  ForbiddenException,
   Get,
+  Param,
+  Post,
+  Put,
+  Query,
   Request,
   UseGuards,
-  Put,
-  Delete,
-  Param,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -22,12 +24,19 @@ export class AuthController {
 
   @Post('register')
   register(@Body() registerDto: RegisterDto) {
-    return this.authService.register(
-      registerDto.name,
-      registerDto.email,
-      registerDto.password,
-      registerDto.role,
-    );
+    return this.authService.register(registerDto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('admins')
+  createAdmin(@Body() registerDto: RegisterDto, @Request() req) {
+    if (req.user.role !== 'super_admin') {
+      throw new ForbiddenException('Only super admins can create admins');
+    }
+    return this.authService.register(registerDto, {
+      allowPrivileged: true,
+      forceRole: 'admin',
+    });
   }
 
   @Post('login')
@@ -38,17 +47,25 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Get('profile')
   getProfile(@Request() req) {
-    return req.user.user; // Return the user directly from the JWT payload
+    return this.authService.getProfile(req.user.userId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('users')
-  getAllUsers(@Request() req) {
-    // Check if user is admin
-    if (req.user.role !== 'admin') {
-      throw new Error('Access denied. Admin role required.');
+  getAllUsers(@Request() req, @Query('role') role?: string) {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      throw new ForbiddenException('Access denied. Admin role required.');
     }
-    return this.authService.getAllUsers();
+    return this.authService.getAllUsers(role as any);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('admins')
+  getAdmins(@Request() req) {
+    if (req.user.role !== 'super_admin') {
+      throw new ForbiddenException('Only super admins can view admins');
+    }
+    return this.authService.getAllUsers('admin');
   }
 
   @UseGuards(JwtAuthGuard)
@@ -64,13 +81,21 @@ export class AuthController {
     @Body() updateUserDto: UpdateUserDto,
     @Request() req,
   ) {
-    return this.authService.updateUser(id, updateUserDto, req.user.role);
+    return this.authService.updateUser(
+      id,
+      updateUserDto,
+      req.user.role,
+      req.user.userId,
+    );
   }
 
   @UseGuards(JwtAuthGuard)
   @Put('change-password')
-  changePassword(@Body() changePasswordDto: ChangePasswordDto, @Request() req) {
-    return this.authService.changePassword(req.user.sub, changePasswordDto);
+  changePassword(
+    @Body() changePasswordDto: ChangePasswordDto,
+    @Request() req,
+  ) {
+    return this.authService.changePassword(req.user.userId, changePasswordDto);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -81,7 +106,10 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('users/hostel/:hostelId/bookings')
-  getUsersByHostelBookings(@Param('hostelId') hostelId: string) {
+  getUsersByHostelBookings(@Param('hostelId') hostelId: string, @Request() req) {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      throw new ForbiddenException('Access denied. Admin role required.');
+    }
     return this.authService.getUsersByHostelBookings(hostelId);
   }
 }

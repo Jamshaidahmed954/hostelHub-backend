@@ -1,15 +1,17 @@
 import {
-  Controller,
-  Post,
-  Get,
-  Put,
-  Delete,
   Body,
+  Controller,
+  Delete,
+  Get,
   Param,
+  Post,
+  Put,
+  Query,
 } from '@nestjs/common';
-import { HostelService } from './hostel.service';
+
 import { RegisterHostelDto } from './dto/register-hostel.dto';
 import { UpdateHostelDto } from './dto/update-hostel.dto';
+import { HostelService } from './hostel.service';
 
 @Controller('hostel')
 export class HostelController {
@@ -21,8 +23,12 @@ export class HostelController {
   }
 
   @Get()
-  async getAllHostels() {
-    return this.hostelService.getAllHostels();
+  async getAllHostels(
+    @Query('owner') owner?: string,
+    @Query('city') city?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.hostelService.getHostels({ owner, city, search });
   }
 
   @Get(':id')

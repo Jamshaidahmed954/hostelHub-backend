@@ -1,16 +1,17 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+
+import { Hostel, HostelDocument } from '../hostel/hostel.schema';
 import { RegisterBookingDto } from './dto/register-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 import { Booking, BookingDocument } from './booking.schema';
-import { Hostel } from '../hostel/hostel.schema';
 
 @Injectable()
 export class BookingService {
   constructor(
     @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>,
-    @InjectModel(Hostel.name) private hostelModel: Model<any>,
+    @InjectModel(Hostel.name) private hostelModel: Model<HostelDocument>,
   ) {}
 
   async createBooking(
@@ -19,13 +20,13 @@ export class BookingService {
     // Check if the hostel exists and get room availability
     const hostel = await this.hostelModel.findById(dto.hostelId);
     if (!hostel) {
-      throw new Error('Hostel not found');
+      throw new NotFoundException('Hostel not found');
     }
 
     // Find the specific room
     const room = hostel.rooms?.find((r) => r.roomNumber === dto.roomNumber);
     if (!room) {
-      throw new Error('Room not found in this hostel');
+      throw new NotFoundException('Room not found in this hostel');
     }
 
     // Check if room is available
@@ -35,8 +36,20 @@ export class BookingService {
 
     // Create the booking
     const bookingReference = this.generateBookingReference();
-    const newBooking = new this.bookingModel({ ...dto, bookingReference });
-    return newBooking.save();
+    const newBooking = new this.bookingModel({
+      ...dto,
+      bookingReference,
+      status: dto.status ?? 'pending',
+      paymentStatus: dto.paymentStatus ?? 'pending',
+    });
+    const savedBooking = await newBooking.save();
+
+    await this.hostelModel.updateOne(
+      { _id: dto.hostelId, 'rooms.roomNumber': dto.roomNumber },
+      { $set: { 'rooms.$.available': false } },
+    );
+
+    return savedBooking;
   }
 
   async getBookingById(id: string): Promise<Booking | null> {
@@ -44,11 +57,35 @@ export class BookingService {
   }
 
   async getAllBookings(): Promise<Booking[]> {
-    return this.bookingModel.find().populate('hostelId').exec();
+    return this.bookingModel
+      .find()
+      .sort({ createdAt: -1 })
+      .populate('hostelId')
+      .exec();
   }
 
   async getBookingsByHostel(hostelId: string): Promise<Booking[]> {
-    return this.bookingModel.find({ hostelId }).populate('hostelId').exec();
+    return this.bookingModel
+      .find({ hostelId })
+      .sort({ createdAt: -1 })
+      .populate('hostelId')
+      .exec();
+  }
+
+  async getBookingsByOwner(ownerId: string): Promise<Booking[]> {
+    const hostels = await this.hostelModel
+      .find({ owner: ownerId })
+      .select('_id')
+      .lean();
+    if (!hostels.length) {
+      return [];
+    }
+    const hostelIds = hostels.map((hostel) => hostel._id);
+    return this.bookingModel
+      .find({ hostelId: { $in: hostelIds } })
+      .sort({ createdAt: -1 })
+      .populate('hostelId')
+      .exec();
   }
 
   async getBookingsByGuestEmail(email: string): Promise<Booking[]> {

@@ -1,41 +1,118 @@
 import {
-  Injectable,
-  UnauthorizedException,
   BadRequestException,
-  NotFoundException,
   ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+  UnauthorizedException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
-import { User, UserDocument } from './user.schema';
-import { UpdateUserDto } from './dto/update-user.dto';
+import { Model } from 'mongoose';
+
+import { Booking, BookingDocument } from '../booking/booking.schema';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import { Booking } from '../booking/booking.schema';
+import { RegisterDto } from './dto/register.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { User, UserDocument } from './user.schema';
+
+type UserRole = 'super_admin' | 'admin' | 'user';
+
+interface RegisterOptions {
+  allowPrivileged?: boolean;
+  forceRole?: UserRole;
+}
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
-    @InjectModel(User.name) private userModel: Model<UserDocument>,
-    @InjectModel(Booking.name) private bookingModel: Model<any>,
-    private jwtService: JwtService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Booking.name)
+    private readonly bookingModel: Model<BookingDocument>,
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
   ) {}
 
+  async onModuleInit() {
+    await this.seedDefaultSuperAdmin();
+  }
+
+  private async seedDefaultSuperAdmin() {
+    const email = this.configService.get<string>('DEFAULT_SUPER_ADMIN_EMAIL');
+    const password = this.configService.get<string>(
+      'DEFAULT_SUPER_ADMIN_PASSWORD',
+    );
+    const name =
+      this.configService.get<string>('DEFAULT_SUPER_ADMIN_NAME') ??
+      'Super Admin';
+
+    if (!email || !password) {
+      this.logger.log('Skipping super admin seeding (missing credentials)');
+      return;
+    }
+
+    const superAdminExists = await this.userModel
+      .findOne({ role: 'super_admin' })
+      .lean();
+    if (superAdminExists) {
+      return;
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await this.userModel.create({
+      name,
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      role: 'super_admin',
+    });
+    this.logger.log(`Default super admin created with email ${email}`);
+  }
+
+  private sanitizeRole(role?: string): UserRole {
+    if (role === 'admin' || role === 'super_admin' || role === 'user') {
+      return role;
+    }
+    return 'user';
+  }
+
+  private toSafeUser(user: UserDocument | (UserDocument & { _id: any })) {
+    return {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      role: user.role as UserRole,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
+  }
+
   // ✅ Register user
-  async register(name: string, email: string, password: string, role?: string) {
+  async register(registerDto: RegisterDto, options?: RegisterOptions) {
     try {
-      // Validate required fields
-      if (!name || name.trim() === '') {
+      const name = registerDto.name?.trim();
+      const email = registerDto.email?.trim().toLowerCase();
+      const password = registerDto.password?.trim();
+
+      if (!name) {
         throw new BadRequestException('Name is required and cannot be empty');
       }
-      if (!email || email.trim() === '') {
+      if (!email) {
         throw new BadRequestException('Email is required and cannot be empty');
       }
-      if (!password || password.trim() === '') {
-        throw new BadRequestException(
-          'Password is required and cannot be empty',
-        );
+      if (!password) {
+        throw new BadRequestException('Password is required and cannot be empty');
+      }
+
+      const desiredRole =
+        options?.forceRole ?? this.sanitizeRole(registerDto.role);
+      const isPrivileged = desiredRole !== 'user';
+      if (isPrivileged && !options?.allowPrivileged) {
+        throw new ForbiddenException('Only super admins can create admin users');
       }
 
       const existingUser = await this.userModel.findOne({ email });
@@ -45,21 +122,17 @@ export class AuthService {
 
       const hashedPassword = await bcrypt.hash(password, 10);
       const user = new this.userModel({
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
+        name,
+        email,
         password: hashedPassword,
-        role: role || 'user',
+        role: desiredRole,
       });
 
       await user.save();
 
       return {
         success: true,
-        user: {
-          name: user.name,
-          email: user.email,
-          role: user.role,
-        },
+        user: this.toSafeUser(user),
         message: 'User registered successfully',
       };
     } catch (error) {
@@ -77,7 +150,8 @@ export class AuthService {
 
   // ✅ Login user
   async login(email: string, password: string) {
-    const user = await this.userModel.findOne({ email });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.userModel.findOne({ email: normalizedEmail });
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -93,19 +167,24 @@ export class AuthService {
     return {
       success: true,
       access_token: token,
-      user: { name: user.name, email: user.email, role: user.role },
+      user: this.toSafeUser(user),
       message: 'Login successful',
     };
   }
 
   // ✅ Get Profile from token
   async getProfile(userId: string) {
-    return this.userModel.findById(userId).select('-password');
+    const user = await this.userModel.findById(userId).select('-password');
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user;
   }
 
   // ✅ Get all users (admin only)
-  async getAllUsers() {
-    return this.userModel.find().select('-password').sort({ createdAt: -1 });
+  async getAllUsers(role?: UserRole) {
+    const query = role ? { role } : {};
+    return this.userModel.find(query).select('-password').sort({ createdAt: -1 });
   }
 
   // ✅ Get user by ID
@@ -122,20 +201,23 @@ export class AuthService {
     userId: string,
     updateData: UpdateUserDto,
     currentUserRole?: string,
+    requesterId?: string,
   ) {
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Only allow users to update their own profile or admins to update any profile
-    if (currentUserRole !== 'admin' && userId !== userId) {
+    const isPrivileged =
+      currentUserRole === 'admin' || currentUserRole === 'super_admin';
+    const isSelfUpdate = requesterId === userId;
+    if (!isPrivileged && !isSelfUpdate) {
       throw new ForbiddenException('You can only update your own profile');
     }
 
-    // Prevent non-admin users from changing roles
-    if (updateData.role && currentUserRole !== 'admin') {
-      throw new ForbiddenException('Only admins can change user roles');
+    // Prevent role escalation
+    if (updateData.role && currentUserRole !== 'super_admin') {
+      throw new ForbiddenException('Only super admins can change user roles');
     }
 
     const updatedUser = await this.userModel
@@ -184,7 +266,10 @@ export class AuthService {
 
   // ✅ Delete user (admin only)
   async deleteUser(userId: string, currentUserRole?: string) {
-    if (currentUserRole !== 'admin') {
+    if (
+      currentUserRole !== 'admin' &&
+      currentUserRole !== 'super_admin'
+    ) {
       throw new ForbiddenException('Only admins can delete users');
     }
 

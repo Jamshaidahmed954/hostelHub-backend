@@ -37,6 +37,11 @@ export class BookingController {
     return this.bookingService.getBookingsByHostel(hostelId);
   }
 
+  @Get('owner/:ownerId')
+  async getBookingsByOwner(@Param('ownerId') ownerId: string) {
+    return this.bookingService.getBookingsByOwner(ownerId);
+  }
+
   @Get('guest/:email')
   async getBookingsByGuest(@Param('email') email: string) {
     return this.bookingService.getBookingsByGuestEmail(email);

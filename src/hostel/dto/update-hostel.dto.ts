@@ -1,9 +1,9 @@
 import {
-  IsString,
-  IsNumber,
-  IsOptional,
   IsArray,
   IsBoolean,
+  IsNumber,
+  IsOptional,
+  IsString,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -32,12 +32,21 @@ export class RoomDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  amenities?: string[];
 }
 
 export class UpdateHostelDto {
   @IsOptional()
   @IsString()
   name?: string;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
 
   @IsOptional()
   @IsString()
@@ -54,6 +63,10 @@ export class UpdateHostelDto {
   @IsOptional()
   @IsNumber()
   capacity?: number;
+
+  @IsOptional()
+  @IsNumber()
+  price?: number;
 
   @IsOptional()
   @IsString()

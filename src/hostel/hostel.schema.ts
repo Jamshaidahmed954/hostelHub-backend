@@ -24,10 +24,15 @@ export class Room {
   description?: string;
 }
 
-@Schema()
+export const RoomSchema = SchemaFactory.createForClass(Room);
+
+@Schema({ timestamps: true })
 export class Hostel {
   @Prop({ required: true })
   name: string;
+
+  @Prop({ required: true })
+  location: string;
 
   @Prop({ required: true })
   address: string;
@@ -42,6 +47,15 @@ export class Hostel {
   capacity: number;
 
   @Prop({ required: true })
+  price: number;
+
+  @Prop({ default: 4.5 })
+  rating: number;
+
+  @Prop({ default: 0 })
+  reviews: number;
+
+  @Prop({ required: true })
   owner: string;
 
   @Prop()
@@ -53,10 +67,10 @@ export class Hostel {
   @Prop()
   contactInfo?: string;
 
-  @Prop([String])
+  @Prop({ type: [String], default: [] })
   images?: string[];
 
-  @Prop([Room])
+  @Prop({ type: [RoomSchema], default: [] })
   rooms?: Room[];
 }
 
