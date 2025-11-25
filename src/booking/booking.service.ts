@@ -6,25 +6,29 @@ import { Hostel, HostelDocument } from '../hostel/hostel.schema';
 import { RegisterBookingDto } from './dto/register-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 import { Booking, BookingDocument } from './booking.schema';
+import { RoomsService } from '../rooms/rooms.service';
 
 @Injectable()
 export class BookingService {
   constructor(
     @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>,
     @InjectModel(Hostel.name) private hostelModel: Model<HostelDocument>,
+    private roomsService: RoomsService,
   ) {}
 
   async createBooking(
     dto: RegisterBookingDto,
   ): Promise<Booking | { message: string }> {
-    // Check if the hostel exists and get room availability
+    // Check if the hostel exists
     const hostel = await this.hostelModel.findById(dto.hostelId);
     if (!hostel) {
       throw new NotFoundException('Hostel not found');
     }
 
-    // Find the specific room
-    const room = hostel.rooms?.find((r) => r.roomNumber === dto.roomNumber);
+    // Find rooms for this hostel with the specific room number
+    const rooms = await this.roomsService.getRoomsByHostel(dto.hostelId.toString());
+    const room = rooms.find((r) => r.roomNumber === dto.roomNumber);
+    
     if (!room) {
       throw new NotFoundException('Room not found in this hostel');
     }
@@ -44,10 +48,8 @@ export class BookingService {
     });
     const savedBooking = await newBooking.save();
 
-    await this.hostelModel.updateOne(
-      { _id: dto.hostelId, 'rooms.roomNumber': dto.roomNumber },
-      { $set: { 'rooms.$.available': false } },
-    );
+    // Update room availability
+    await this.roomsService.updateRoomAvailability((room as any)._id.toString(), false);
 
     return savedBooking;
   }
@@ -77,16 +79,23 @@ export class BookingService {
       .find({ owner: ownerId })
       .select('_id')
       .lean();
+      console.log(hostels,"hostels found for owner");
+      
     if (!hostels.length) {
       return [];
     }
     const hostelIds = hostels.map((hostel) => hostel._id);
+    console.log(hostelIds,"hostel idies");
+    
     return this.bookingModel
       .find({ hostelId: { $in: hostelIds } })
       .sort({ createdAt: -1 })
       .populate('hostelId')
       .exec();
+
+
   }
+  
 
   async getBookingsByGuestEmail(email: string): Promise<Booking[]> {
     return this.bookingModel
@@ -112,11 +121,13 @@ export class BookingService {
       return null;
     }
 
-    // Update room availability in hostel (make room available again)
-    await this.hostelModel.updateOne(
-      { _id: booking.hostelId, 'rooms.roomNumber': booking.roomNumber },
-      { $set: { 'rooms.$.available': true } },
-    );
+    // Find the room and make it available again
+    const rooms = await this.roomsService.getRoomsByHostel(booking.hostelId.toString());
+    const room = rooms.find((r) => r.roomNumber === booking.roomNumber);
+    
+    if (room) {
+      await this.roomsService.updateRoomAvailability((room as any)._id.toString(), true);
+    }
 
     // Update booking status
     return this.bookingModel
@@ -136,11 +147,13 @@ export class BookingService {
       return null;
     }
 
-    // Update room availability in hostel
-    await this.hostelModel.updateOne(
-      { _id: booking.hostelId, 'rooms.roomNumber': booking.roomNumber },
-      { $set: { 'rooms.$.available': false } },
-    );
+    // Find the room and mark as unavailable
+    const rooms = await this.roomsService.getRoomsByHostel(booking.hostelId.toString());
+    const room = rooms.find((r) => r.roomNumber === booking.roomNumber);
+    
+    if (room) {
+      await this.roomsService.updateRoomAvailability((room as any)._id.toString(), false);
+    }
 
     // Update booking status
     return this.bookingModel

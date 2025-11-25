@@ -3,29 +3,6 @@ import { Document } from 'mongoose';
 
 export type HostelDocument = Hostel & Document;
 
-@Schema()
-export class Room {
-  @Prop({ required: true })
-  roomNumber: string;
-
-  @Prop({ required: true })
-  type: string;
-
-  @Prop({ required: true })
-  capacity: number;
-
-  @Prop({ required: true })
-  price: number;
-
-  @Prop({ default: true })
-  available: boolean;
-
-  @Prop()
-  description?: string;
-}
-
-export const RoomSchema = SchemaFactory.createForClass(Room);
-
 @Schema({ timestamps: true })
 export class Hostel {
   @Prop({ required: true })
@@ -69,9 +46,6 @@ export class Hostel {
 
   @Prop({ type: [String], default: [] })
   images?: string[];
-
-  @Prop({ type: [RoomSchema], default: [] })
-  rooms?: Room[];
 }
 
 export const HostelSchema = SchemaFactory.createForClass(Hostel);
